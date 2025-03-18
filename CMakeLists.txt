@@ -14,17 +14,29 @@ find_package(SDL2 REQUIRED)
 # Find SDL2_image package
 find_package(SDL2_image REQUIRED)
 
-# Include directories
-include_directories(${SDL2_INCLUDE_DIRS} ${SDL2_IMAGE_INCLUDE_DIRS} include)
+# Find SDL2_ttf package
+find_package(SDL2_ttf REQUIRED)
 
-# Add explicit include directory for SDL2_image
+# Include directories
+include_directories(${SDL2_INCLUDE_DIRS} ${SDL2_IMAGE_INCLUDE_DIRS} ${SDL2_TTF_INCLUDE_DIRS} include)
+
+# Add explicit include directories for macOS
 include_directories(/opt/homebrew/include)
 
+# Add explicit library directories for macOS
+link_directories(/opt/homebrew/lib)
+
 # Add executable
-add_executable(pixelpets src/main.cpp)
+add_executable(pixelpets src/main.cpp src/render.cpp)
 
 # Link libraries
-target_link_libraries(pixelpets ${SDL2_LIBRARIES} ${SDL2_IMAGE_LIBRARIES})
+target_link_libraries(pixelpets 
+    ${SDL2_LIBRARIES} 
+    ${SDL2_IMAGE_LIBRARIES} 
+    "-framework CoreVideo" 
+    "-framework CoreFoundation"
+    SDL2_ttf
+)
 
 # If SDL2_IMAGE_LIBRARIES is not set, try to find it manually
 if(NOT SDL2_IMAGE_LIBRARIES)
@@ -37,6 +49,20 @@ if(NOT SDL2_IMAGE_LIBRARIES)
     )
     if(SDL2_IMAGE_LIBRARY)
         set(SDL2_IMAGE_LIBRARIES ${SDL2_IMAGE_LIBRARY})
+    endif()
+endif()
+
+# If SDL2_TTF_LIBRARIES is not set, try to find it manually
+if(NOT SDL2_TTF_LIBRARIES)
+    find_library(SDL2_TTF_LIBRARY
+        NAMES SDL2_ttf
+        HINTS
+        ENV SDL2TTFDIR
+        ENV SDL2DIR
+        PATH_SUFFIXES lib
+    )
+    if(SDL2_TTF_LIBRARY)
+        set(SDL2_TTF_LIBRARIES ${SDL2_TTF_LIBRARY})
     endif()
 endif()
 

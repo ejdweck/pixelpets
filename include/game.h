@@ -16,15 +16,18 @@ const int SCREEN_WIDTH = 135;  // Width in pixels
 const int SCREEN_HEIGHT = 240; // Height in pixels
 const int PIXEL_SIZE = 2;      // Reduced pixel size for better detail on smaller screen
 
+// Weather and time constants
+const int WEATHER_CHANGE_INTERVAL = 30000;  // 30 seconds in milliseconds
+const int TOOLBAR_HEIGHT = 40;  // Height of the toolbar at bottom
+
 // Menu constants
 const int MENU_BUTTON_SIZE = 24;
 const int BG_BUTTON_SIZE = 24;
+const int SELL_BUTTON_SIZE = 40;  // Size of sell plant button
+const int STORE_BUTTON_SIZE = 24; // Size of store button
 const int MENU_GRID_COLS = 3;  // Updated to show more plants
 const int MENU_GRID_ROWS = 4;  // Updated to show more plants
 const int MENU_ITEM_PADDING = 5; // Reduced padding to fit more plants
-
-// Plant gift timer (10 seconds)
-const int PLANT_GIFT_INTERVAL = 10000; // in milliseconds
 
 // Celebration animation constants
 const int CELEBRATION_DURATION = 2000; // Duration of celebration animation in milliseconds
@@ -34,29 +37,38 @@ const int PARTICLE_SIZE = 3;           // Size of celebration particles
 // Game states
 enum class GameState {
     INTRO,                // Intro screen 
-    NAME_ENTRY,           // Enter player name
-    GENDER_SELECTION,     // Select player gender
     STARTER_SELECTION,    // Choose starter plant
     PLANT_VIEW,           // Viewing a single plant
-    MENU_VIEW,            // Viewing the menu grid of plants
+    INVENTORY_VIEW,       // Viewing the inventory grid of plants
+    MAP_VIEW,            // Viewing the map of locations
+    HOUSE_VIEW,          // Viewing the house
+    STORE_VIEW,          // Viewing the store
+    PASTURE_VIEW,        // Viewing the pasture
+    GREENHOUSE_VIEW,     // Viewing the greenhouse
     CELEBRATION_ANIMATION,// Celebration animation before gift notification
-    GIFT_NOTIFICATION     // Notification of new plant gift
+    GIFT_NOTIFICATION,    // Notification of new plant gift
+    STORE                 // Plant store to buy new plants
 };
 
 // Background types
-enum class BackgroundType {
+enum class WeatherType {
     SUNNY,
     RAINY,
     CLOUDY,
+    WINDY
+};
+
+enum class DayNightType {
+    DAY,
     NIGHT
 };
 
-// Background type names array
-const std::string BackgroundTypeNames[] = {
+// Weather type names array
+const std::string WeatherTypeNames[] = {
     "Sunny",
     "Rainy",
     "Cloudy",
-    "Night"
+    "Windy"
 };
 
 // Plant data structure
@@ -66,8 +78,51 @@ struct Plant {
     SDL_Texture* texture;
     int width;
     int height;
-    BackgroundType preferredBackground = BackgroundType::SUNNY; // Default background
-    bool isOwned = false; // Whether the player owns this plant
+    WeatherType preferredWeather;
+    bool isOwned;
+    
+    // Default constructor
+    Plant() : texture(nullptr), width(0), height(0), preferredWeather(WeatherType::SUNNY), isOwned(false) {}
+    
+    ~Plant() {
+        if (texture) {
+            SDL_DestroyTexture(texture);
+            texture = nullptr;
+        }
+    }
+    
+    // Prevent copying to avoid double-free
+    Plant(const Plant&) = delete;
+    Plant& operator=(const Plant&) = delete;
+    
+    // Allow moving
+    Plant(Plant&& other) noexcept
+        : name(std::move(other.name))
+        , filename(std::move(other.filename))
+        , texture(other.texture)
+        , width(other.width)
+        , height(other.height)
+        , preferredWeather(other.preferredWeather)
+        , isOwned(other.isOwned) {
+        other.texture = nullptr;
+    }
+    
+    Plant& operator=(Plant&& other) noexcept {
+        if (this != &other) {
+            if (texture) {
+                SDL_DestroyTexture(texture);
+            }
+            name = std::move(other.name);
+            filename = std::move(other.filename);
+            texture = other.texture;
+            width = other.width;
+            height = other.height;
+            preferredWeather = other.preferredWeather;
+            isOwned = other.isOwned;
+            other.texture = nullptr;
+        }
+        return *this;
+    }
 };
 
 // Button structure
@@ -83,17 +138,21 @@ struct Button {
 
 // Color palette - GameBoy inspired
 struct ColorPalette {
-    SDL_Color background = {15, 56, 15, 255};    // Dark green
-    SDL_Color darkest = {48, 98, 48, 255};       // Medium green
-    SDL_Color medium = {139, 172, 15, 255};      // Light green
-    SDL_Color lightest = {155, 188, 15, 255};    // Pale green
+    // Classic GameBoy colors
+    // Lightest to darkest (4 shades of green)
+    SDL_Color lightest = {155, 188, 15, 255};   // Light green (#9bbc0f)
+    SDL_Color medium = {139, 172, 15, 255};     // Medium green (#8bac0f)
+    SDL_Color darkest = {48, 98, 48, 255};      // Dark green (#306230) 
+    SDL_Color background = {15, 56, 15, 255};   // Darkest green (#0f380f)
     
     // Additional colors
     SDL_Color black = {0, 0, 0, 255};
-    SDL_Color white = {255, 255, 255, 255};
-    SDL_Color yellow = {255, 255, 0, 255};
-    SDL_Color red = {255, 0, 0, 255};
-    SDL_Color blue = {0, 0, 255, 255};
+    SDL_Color white = {228, 228, 208, 255};    // Off-white with greenish tint (#e4e4d0)
+    SDL_Color yellow = {255, 255, 100, 255};   // Slightly muted yellow
+    SDL_Color red = {220, 50, 50, 255};        // Muted red
+    SDL_Color blue = {80, 100, 220, 255};      // Muted blue
+    SDL_Color brown = {139, 69, 19, 255};      // Brown for soil
+    SDL_Color waterBlue = {30, 144, 255, 255}; // Dodger blue for water
 };
 
 // Background data structure
@@ -103,21 +162,60 @@ struct Background {
     SDL_Texture* texture;
     int width;
     int height;
+    
+    // Default constructor
+    Background() : texture(nullptr), width(0), height(0) {}
+    
+    ~Background() {
+        if (texture) {
+            SDL_DestroyTexture(texture);
+            texture = nullptr;
+        }
+    }
+    
+    // Prevent copying to avoid double-free
+    Background(const Background&) = delete;
+    Background& operator=(const Background&) = delete;
+    
+    // Allow moving
+    Background(Background&& other) noexcept
+        : name(std::move(other.name))
+        , filename(std::move(other.filename))
+        , texture(other.texture)
+        , width(other.width)
+        , height(other.height) {
+        other.texture = nullptr;
+    }
+    
+    Background& operator=(Background&& other) noexcept {
+        if (this != &other) {
+            if (texture) {
+                SDL_DestroyTexture(texture);
+            }
+            name = std::move(other.name);
+            filename = std::move(other.filename);
+            texture = other.texture;
+            width = other.width;
+            height = other.height;
+            other.texture = nullptr;
+        }
+        return *this;
+    }
 };
 
-// Gender type
-enum class Gender {
-    MALE,
-    FEMALE
+// Structure to represent a raindrop
+struct Raindrop {
+    float x;
+    float y;
+    float speed;
+    int length;
 };
 
 // Player data structure
 struct Player {
-    std::string name = "";
-    Gender gender = Gender::MALE;
     int selectedPlantIndex = -1;  // Index of chosen starter plant
     std::vector<int> ownedPlants; // Indices of owned plants
-    Uint32 lastGiftTime = 0;      // Last time player received a plant gift
+    int coins = 0;  // Player's currency
 };
 
 // Celebration particle structure
@@ -130,6 +228,42 @@ struct Particle {
     int size;
     int lifespan;
     int age;
+};
+
+// Add new button definitions for plant navigation
+struct PlantNavigationButtons {
+    Button prevPlantButton;
+    Button nextPlantButton;
+    Button mapButton;
+    Button storeButton;  // Added store button
+};
+
+// Location data structure
+struct Location {
+    std::string name;
+    std::string description;
+    SDL_Rect buttonRect;  // Clickable area on the map
+    GameState viewState;  // Which game state to switch to when clicked
+};
+
+// Store state
+struct StoreState {
+    bool isAskingToSell = false;
+    bool isShowingOffer = false;
+    int selectedPlantIndex = -1;
+    int offerAmount = 0;
+    std::string shopkeeperText = "Welcome to my shop! Would you like to sell any plants?";
+    Button yesButton = {{SCREEN_WIDTH/2 - 30, SCREEN_HEIGHT - TOOLBAR_HEIGHT - 40, 40, 20}, false};
+    Button noButton = {{SCREEN_WIDTH/2 + 10, SCREEN_HEIGHT - TOOLBAR_HEIGHT - 40, 40, 20}, false};
+    Button backButton = {{10, 10, 40, 20}, false};
+};
+
+// Game state data structure
+struct GameStateData {
+    GameState currentState = GameState::INTRO;
+    std::vector<Plant> plants;
+    Player player;
+    StoreState storeState;
 };
 
 // Function to draw a pixel at (x, y) with the given color
@@ -160,28 +294,12 @@ inline SDL_Texture* loadTexture(SDL_Renderer* renderer, const std::string& path)
     return newTexture;
 }
 
-// Function to render a texture to the screen
-inline void renderTexture(SDL_Renderer* renderer, SDL_Texture* texture, int x, int y, SDL_Rect* clip = nullptr, double scale = 1.0) {
-    // Enable alpha blending for transparency
-    SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-    
-    // Set rendering space
-    SDL_Rect renderQuad = {x, y, 0, 0};
-    
-    // Set clip rendering dimensions
-    if (clip != nullptr) {
-        renderQuad.w = clip->w * scale;
-        renderQuad.h = clip->h * scale;
-    } else {
-        // Query texture to get its width and height
-        SDL_QueryTexture(texture, nullptr, nullptr, &renderQuad.w, &renderQuad.h);
-        renderQuad.w *= scale;
-        renderQuad.h *= scale;
-    }
-    
-    // Render to screen
-    SDL_RenderCopy(renderer, texture, clip, &renderQuad);
-}
+// Function declarations (non-inline)
+void renderTexture(SDL_Renderer* renderer, SDL_Texture* texture, int x, int y, SDL_Rect* clip, double scale);
+void drawButton(SDL_Renderer* renderer, const Button& button, const ColorPalette& palette);
+void drawBgButton(SDL_Renderer* renderer, const Button& button, const ColorPalette& palette);
+void drawPlantSelectionButton(SDL_Renderer* renderer, const Button& button, SDL_Texture* plantTexture, int plantWidth, int plantHeight, bool isSelected, const ColorPalette& palette);
+void drawFertilizerIcon(SDL_Renderer* renderer, int x, int y, int size, const ColorPalette& palette);
 
 // Function to draw a button
 inline void drawButton(SDL_Renderer* renderer, const Button& button, const ColorPalette& palette) {
@@ -490,5 +608,104 @@ inline Particle createRandomParticle(int screenWidth, int screenHeight) {
     
     return particle;
 }
+
+// Function to draw a water droplet icon
+inline void drawWaterIcon(SDL_Renderer* renderer, int x, int y, int size, const ColorPalette& palette) {
+    // Draw water droplet shape
+    SDL_SetRenderDrawColor(renderer, palette.waterBlue.r, palette.waterBlue.g, palette.waterBlue.b, palette.waterBlue.a);
+    
+    // Circle for top of droplet
+    int radius = size / 3;
+    for (int dy = -radius; dy <= radius; dy++) {
+        for (int dx = -radius; dx <= radius; dx++) {
+            if (dx*dx + dy*dy <= radius*radius) {
+                SDL_Rect pixel = {x + dx, y + dy, 1, 1};
+                SDL_RenderFillRect(renderer, &pixel);
+            }
+        }
+    }
+    
+    // Triangle for bottom of droplet
+    SDL_Point points[3] = {
+        {x - radius, y},
+        {x + radius, y},
+        {x, y + radius * 2}
+    };
+    
+    for (int py = y; py <= y + radius * 2; py++) {
+        int width = radius * 2 - (py - y);
+        for (int px = x - width/2; px <= x + width/2; px++) {
+            SDL_Rect pixel = {px, py, 1, 1};
+            SDL_RenderFillRect(renderer, &pixel);
+        }
+    }
+    
+    // Draw outline
+    SDL_SetRenderDrawColor(renderer, palette.darkest.r, palette.darkest.g, palette.darkest.b, palette.darkest.a);
+    SDL_RenderDrawLine(renderer, points[0].x, points[0].y, points[2].x, points[2].y);
+    SDL_RenderDrawLine(renderer, points[1].x, points[1].y, points[2].x, points[2].y);
+}
+
+// Function to draw a fertilizer icon
+inline void drawFertilizerIcon(SDL_Renderer* renderer, int x, int y, int size, const ColorPalette& palette) {
+    // Draw fertilizer bag
+    SDL_SetRenderDrawColor(renderer, palette.brown.r, palette.brown.g, palette.brown.b, palette.brown.a);
+    
+    // Draw bag shape
+    SDL_Rect bag = {x - size/2, y - size/3, size, size*2/3};
+    SDL_RenderFillRect(renderer, &bag);
+    
+    // Draw N-P-K text on bag
+    SDL_SetRenderDrawColor(renderer, palette.white.r, palette.white.g, palette.white.b, palette.white.a);
+    
+    // Draw simplified N
+    SDL_RenderDrawLine(renderer, x - size/4, y - size/6, x - size/4, y + size/6);
+    SDL_RenderDrawLine(renderer, x - size/4, y - size/6, x - size/8, y + size/6);
+    
+    // Draw simplified P
+    SDL_RenderDrawLine(renderer, x, y - size/6, x, y + size/6);
+    SDL_Rect pCircle = {x, y - size/6, size/8, size/8};
+    SDL_RenderDrawRect(renderer, &pCircle);
+    
+    // Draw simplified K
+    SDL_RenderDrawLine(renderer, x + size/4, y - size/6, x + size/4, y + size/6);
+    SDL_RenderDrawLine(renderer, x + size/4, y, x + size/3, y - size/6);
+    SDL_RenderDrawLine(renderer, x + size/4, y, x + size/3, y + size/6);
+    
+    // Draw outline
+    SDL_SetRenderDrawColor(renderer, palette.darkest.r, palette.darkest.g, palette.darkest.b, palette.darkest.a);
+    SDL_RenderDrawRect(renderer, &bag);
+}
+
+// Function to draw a progress bar
+inline void drawProgressBar(SDL_Renderer* renderer, int x, int y, int width, int height, 
+                            float percentage, const SDL_Color& fillColor, const SDL_Color& emptyColor,
+                            const SDL_Color& borderColor) {
+    // Clamp percentage between 0 and 100
+    percentage = std::max(0.0f, std::min(100.0f, percentage));
+    
+    // Draw border
+    SDL_SetRenderDrawColor(renderer, borderColor.r, borderColor.g, borderColor.b, borderColor.a);
+    SDL_Rect borderRect = {x, y, width, height};
+    SDL_RenderDrawRect(renderer, &borderRect);
+    
+    // Draw empty background
+    SDL_SetRenderDrawColor(renderer, emptyColor.r, emptyColor.g, emptyColor.b, emptyColor.a);
+    SDL_Rect emptyRect = {x + 1, y + 1, width - 2, height - 2};
+    SDL_RenderFillRect(renderer, &emptyRect);
+    
+    // Draw filled part
+    SDL_SetRenderDrawColor(renderer, fillColor.r, fillColor.g, fillColor.b, fillColor.a);
+    int fillWidth = static_cast<int>((width - 2) * percentage / 100.0f);
+    if (fillWidth > 0) {
+        SDL_Rect fillRect = {x + 1, y + 1, fillWidth, height - 2};
+        SDL_RenderFillRect(renderer, &fillRect);
+    }
+}
+
+// Add store-related functions
+void generateOffer(GameStateData& state);
+void handleStoreInteraction(GameStateData& state, int x, int y);
+void resetStoreState(GameStateData& state);
 
 #endif // GAME_H 
